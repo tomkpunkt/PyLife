@@ -2,7 +2,7 @@ import pytest
 import numpy as np
 import pymunk
 import pygame
-from simulation import Simulation
+from PyLife.simulation import Simulation
 
 @pytest.fixture
 def simulation():
@@ -22,6 +22,7 @@ class TestSimulation:
         assert simulation.generation == 1
         assert simulation.zoom == 1.0
         assert simulation.camera_offset == (0, 0)
+        assert simulation.population_size == 20  # Neue Eigenschaft
 
     def test_spawn_entity(self, simulation):
         """Testet das Spawnen von Entities"""
@@ -35,6 +36,7 @@ class TestSimulation:
         assert entity.body.position.x <= simulation.width
         assert entity.body.position.y >= 0
         assert entity.body.position.y <= simulation.height
+        assert hasattr(entity, 'brain')  # Überprüfe Brain-Initialisierung
 
     def test_spawn_food(self, simulation):
         """Testet das Spawnen von Nahrung"""
@@ -48,6 +50,8 @@ class TestSimulation:
         assert food.body.position.x <= simulation.width
         assert food.body.position.y >= 0
         assert food.body.position.y <= simulation.height
+        assert hasattr(food, 'energy_value')
+        assert hasattr(food, 'quality')
 
     def test_entity_selection(self, simulation):
         """Testet die Entity-Auswahl"""
@@ -72,18 +76,21 @@ class TestSimulation:
         simulation.handle_zoom(1, (400, 300))
         assert simulation.zoom > initial_zoom
         
+        # Speichere den aktuellen Zoom-Wert
+        current_zoom = simulation.zoom
+        
         # Teste Zoom-Out
         simulation.handle_zoom(-1, (400, 300))
-        assert simulation.zoom < simulation.zoom
+        assert simulation.zoom < current_zoom
         
         # Teste Zoom-Grenzen
-        simulation.zoom = 0.1
-        simulation.handle_zoom(-1, (400, 300))
-        assert simulation.zoom == 0.1
+        for _ in range(20):
+            simulation.handle_zoom(1, (400, 300))
+        assert simulation.zoom <= 4.0  # Maximaler Zoom
         
-        simulation.zoom = 3.0
-        simulation.handle_zoom(1, (400, 300))
-        assert simulation.zoom == 3.0
+        for _ in range(20):
+            simulation.handle_zoom(-1, (400, 300))
+        assert simulation.zoom >= 0.25  # Minimaler Zoom
 
     def test_entity_death(self, simulation):
         """Testet das Entfernen toter Entities"""
@@ -122,15 +129,65 @@ class TestSimulation:
 
     def test_next_generation(self, simulation):
         """Testet die Generationswechsel"""
-        # Spawne einige Entities
-        for _ in range(5):
+        # Spawne die initiale Population
+        for _ in range(simulation.population_size):
             simulation.spawn_entity()
+        
+        # Setze verschiedene Fitness-Werte
+        for i, entity in enumerate(simulation.entities):
+            entity.food_eaten = i  # Unterschiedliche Fitness-Werte
         
         initial_count = len(simulation.entities)
         simulation.next_generation()
         
-        # Überprüfe, ob die alte Generation entfernt wurde
-        assert len(simulation.entities) < initial_count
+        # Überprüfe die neue Generation
+        assert len(simulation.entities) == simulation.population_size
+        assert simulation.generation == 2
         
-        # Überprüfe, ob die neue Generation gestartet wurde
-        assert simulation.generation > 1 
+        # Die besten Entities sollten überlebt haben
+        survivors = [e for e in simulation.entities if e.food_eaten > 0]
+        assert len(survivors) > 0
+
+    def test_brain_updates(self, simulation):
+        """Testet die Gehirn-Updates der Entities"""
+        simulation.spawn_entity()
+        entity = simulation.entities[0]
+        
+        # Initialer Brain-Output
+        initial_output = entity.brain_output if hasattr(entity, 'brain_output') else None
+        
+        # Simuliere mehrere Updates
+        for _ in range(5):
+            simulation.update(1.0)
+            
+            # Brain-Output sollte sich ändern
+            if initial_output is not None:
+                assert not np.array_equal(entity.brain_output, initial_output)
+            initial_output = entity.brain_output.copy()
+
+    def test_fitness_based_selection(self, simulation):
+        """Testet die fitnessbasierte Selektion"""
+        # Spawne Entities mit verschiedenen Fitness-Werten
+        for _ in range(simulation.population_size):
+            simulation.spawn_entity()
+        
+        # Setze verschiedene Eigenschaften für unterschiedliche Fitness
+        for i, entity in enumerate(simulation.entities):
+            entity.health = entity.max_health * (i / len(simulation.entities))
+            entity.energy = entity.max_energy * (i / len(simulation.entities))
+            entity.food_eaten = i
+            entity.children = i % 3
+        
+        # Speichere die besten Entities
+        sorted_entities = sorted(simulation.entities, 
+                               key=lambda e: e.fitness, 
+                               reverse=True)
+        best_entities = sorted_entities[:simulation.population_size // 5]
+        best_ids = [id(e) for e in best_entities]
+        
+        # Nächste Generation
+        simulation.next_generation()
+        
+        # Überprüfe, ob einige der besten Entities überlebt haben
+        survivors = [e for e in simulation.entities if id(e) in best_ids]
+        assert len(survivors) > 0 

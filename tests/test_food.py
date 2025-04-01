@@ -2,7 +2,7 @@ import pytest
 import numpy as np
 import pymunk
 import pygame
-from food import Food
+from PyLife.world_food import Food
 
 @pytest.fixture
 def space():

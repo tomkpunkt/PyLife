@@ -2,172 +2,240 @@ import pygame
 import numpy as np
 from typing import Dict, Tuple
 
+# Basis-Farben
+BASE_COLOR = (32, 255, 232)  # Helles Türkis
+DARK_COLOR = (16, 168, 152)  # Dunkleres Türkis für Schatten
+SIDE_COLOR = (50, 205, 50)  # Helles Grün
+SIDE_DARK_COLOR = (34, 139, 34)  # Dunkleres Grün
+BACK_COLOR = (255, 140, 0)  # Helles Orange
+BACK_DARK_COLOR = (205, 103, 0)  # Dunkleres Orange
+
+# Animation und Rendering Konstanten
+WAVE_ANIMATION_SPEED = 0.005
+WAVE_FREQUENCY = 0.8
+WAVE_AMPLITUDE = 0.2
+SIDE_FIN_SPACING = 0.2
+TAIL_WIDTH_FACTOR = 0.4
+SIDE_FIN_WIDTH_FACTOR = 0.15
+
 class CreatureRenderer:
     def __init__(self):
-        self.max_width = 30
-        self.max_height = 20
+        self.default_width = 68  # Basis-Breite
+        self.default_length = 48  # Basis-Länge (größer für längliche Form)
         
-    def _create_body_surface(self, width: int, height: int, color: Tuple[int, int, int]) -> pygame.Surface:
-        """Erstellt die Grundform des Körpers mit mehr Details und Textur"""
+    def _create_body_surface(self, width: int, height: int) -> pygame.Surface:
+        """Erstellt die Grundform des Körpers als längliches Oval"""
         surface = pygame.Surface((width, height), pygame.SRCALPHA)
         
-        # Dunklerer Rand für mehr Kontrast
-        border_color = tuple(max(0, c - 60) for c in color)
-        # Hellere Highlights für 3D-Effekt
-        highlight_color = tuple(min(255, c + 40) for c in color)
+        padding = 10  # Pixel Abstand für den Rand
+
+        # Äußeres Oval (dunklerer Rand)
+        pygame.draw.ellipse(surface, DARK_COLOR, (
+            padding, 
+            padding, 
+            width - padding * 2, 
+            height - padding * 2
+        ))
+        pygame.draw.ellipse(surface, BASE_COLOR, (
+            padding+1, 
+            padding+1, 
+            width - padding * 2 - 2, 
+            height - padding * 2 - 2
+        ))
         
-        # Hauptkörper (oval)
-        pygame.draw.ellipse(surface, border_color, (0, 0, width, height))
-        pygame.draw.ellipse(surface, color, (2, 2, width-4, height-4))
+        return surface.convert_alpha()
+    
+    def _add_mouth(self, surface: pygame.Surface, dna: Dict) -> None:
+        """Fügt einen runden Mund hinzu"""
+        width, height = surface.get_size()
         
-        # Highlight für 3D-Effekt (oben links)
-        highlight_rect = pygame.Rect(width * 0.2, height * 0.2, width * 0.3, height * 0.3)
-        pygame.draw.ellipse(surface, highlight_color, highlight_rect)
+        # Mundgröße basierend auf DNA (zwischen 10% und 25% der Breite)
+        mouth_size = int(width * 0.7 * (0.1 + 0.1 * dna['feeding']['mouth_size']))
+        teeth_size = int(width * 0.7 * (0.05 + 0.05 * dna['feeding']['mouth_teeth']))
         
-        # Muster/Textur hinzufügen
-        pattern_color = tuple(max(0, c - 30) for c in color)
-        num_patterns = max(3, int(width / 10))
-        for i in range(num_patterns):
-            pattern_x = width * (0.2 + 0.6 * i / num_patterns)
-            pattern_height = height * 0.4
-            pattern_rect = pygame.Rect(pattern_x, height * 0.3, width * 0.1, pattern_height)
-            pygame.draw.ellipse(surface, pattern_color, pattern_rect)
+        # Position (vorne/rechts)
+        mouth_x = width * 0.8  # 80% von der Breite für die rechte Seite
+        mouth_y = height * 0.5  # Mitte der Höhe
         
-        return surface
+        # Äußeres Oval (dunklerer Rand)
+        pygame.draw.circle(surface, DARK_COLOR, (int(mouth_x), int(mouth_y)), mouth_size + 2)
+        # Zeichne den Zähne als weißer Kreis
+        pygame.draw.circle(surface, (255, 255, 255), (int(mouth_x), int(mouth_y)), mouth_size)
+       # Zeichne den Mund als schwarzes oval
+        pygame.draw.ellipse(surface, (0, 0, 0), (mouth_x-mouth_size+teeth_size, mouth_y-mouth_size, 2*(mouth_size-teeth_size), 2*mouth_size))
     
     def _add_eyes(self, surface: pygame.Surface, dna: Dict, energy_percentage: float) -> None:
-        """Fügt Augen basierend auf DNA hinzu"""
+        """Fügt pixelige Augen hinzu"""
         width, height = surface.get_size()
-        eye_size = max(3, int(width * 0.15))
-        eye_count = max(1, min(4, int(dna['eye_count'])))
         
-        # Hellere, leuchtendere Augen basierend auf Energie
-        glow_factor = 0.5 + energy_percentage * 0.5  # Mindestens 50% Leuchtkraft
-        eye_color = (
-            min(255, int((220 + dna['sensor_range'] * 35) * glow_factor)),
-            min(255, int((220 + dna['sensor_range'] * 35) * glow_factor)),
-            0
-        )
+        # Augengröße basierend auf DNA
+        eye_size = int(5.5 * dna['sensors']['eye_size'])
+
+        # Zwei Augen vertikal angeordnet
+        eye_positions = [
+            (width * 0.65, height * 0.22),
+            (width * 0.65, height * 0.78)
+        ]
         
-        # Augen gleichmäßig verteilen
-        for i in range(eye_count):
-            x = width * 0.7  # Augen im vorderen Drittel
-            y = height * (0.3 + (0.4 * i / max(1, eye_count - 1)))  # Vertikal verteilen
-            
-            # Äußerer Kreis (Kontrast)
-            pygame.draw.circle(surface, (20, 20, 20), (int(x), int(y)), eye_size + 1)
-            # Auge
-            pygame.draw.circle(surface, eye_color, (int(x), int(y)), eye_size)
-            # Pupille (größer bei weniger Energie)
-            pupil_size = max(2, int(eye_size * (0.5 + (1 - energy_percentage) * 0.3)))
-            pygame.draw.circle(surface, (0, 0, 0), (int(x), int(y)), pupil_size)
-            # Glanzpunkt (heller bei mehr Energie)
-            highlight_size = max(1, int(eye_size * 0.25 * energy_percentage))
-            highlight_color = (int(255 * energy_percentage), int(255 * energy_percentage), int(255 * energy_percentage))
-            pygame.draw.circle(surface, highlight_color, (int(x-1), int(y-1)), highlight_size)
+        for pos in eye_positions:
+
+            # Äußeres Oval (dunklerer Rand)
+            pygame.draw.circle(surface, DARK_COLOR, (int(pos[0]), int(pos[1])), eye_size + 2)
+            # Weißer Außenring
+            pygame.draw.circle(surface, (255, 255, 255),(int(pos[0]), int(pos[1])), eye_size)
+            # Türkisfarbene Iris
+            pygame.draw.circle(surface, BASE_COLOR,(int(pos[0]), int(pos[1])), eye_size - 2)
+            # Schwarze Pupille
+            pupil_size = max(2, int(eye_size * 0.4))
+            pygame.draw.circle(surface, (0, 0, 0),(int(pos[0]), int(pos[1])), pupil_size)
     
-    def _add_spikes(self, surface: pygame.Surface, dna: Dict) -> None:
-        """Fügt Stacheln oder Auswüchse basierend auf DNA hinzu"""
+    def _add_forward_movement_organs(self, surface: pygame.Surface, dna: Dict, energy_percentage: float) -> None:
+        """Fügt eine Schwanzflosse hinzu, die sich wellenförmig bewegt"""
         width, height = surface.get_size()
-        spike_count = max(3, int(10 * dna['spike_factor']))
-        spike_length = max(3, int(height * 0.3 * dna['spike_length']))
         
-        # Kontrastreichere Stachelfarbe
-        base_color = (
-            min(255, int(180 + dna['health'] * 75)),
-            min(255, int(50 + dna['energy_efficiency'] * 105)),
-            min(255, int(50 + dna['speed'] * 105))
-        )
-        # Dunklere Spitzen für Kontrast
-        tip_color = tuple(max(0, c - 80) for c in base_color)
+        # Flossengröße basierend auf DNA
+        fin_size = max(4, int(width * TAIL_WIDTH_FACTOR * 
+                             dna.get('movement', {}).get('movement_forward_organ_size', 0.5)))
         
-        # Stacheln rund um den Körper verteilen
-        for i in range(spike_count):
-            angle = (2 * np.pi * i) / spike_count
-            base_x = width * 0.5 + np.cos(angle) * width * 0.4
-            base_y = height * 0.5 + np.sin(angle) * height * 0.4
-            tip_x = base_x + np.cos(angle) * spike_length
-            tip_y = base_y + np.sin(angle) * spike_length
+        # Basis-Position der Flosse (links/hinten)
+        base_x = width * 0.25
+        base_y = height * 0.5
+        
+        # Animation
+        time_offset = pygame.time.get_ticks() * WAVE_ANIMATION_SPEED
+        
+        # Punkte für die Flossenform berechnen
+        points = []
+        
+        # Obere Hälfte der Flosse
+        for i in range(6):
+            t = i / 5.0  # 0 bis 1
+            # X-Position: nach links ausbreiten
+            x = base_x - (fin_size * 0.8 * t)
+            # Y-Position: Wellenform nach oben
+            wave = np.sin(time_offset + t * 3) * (fin_size * 0.15)
+            curve = -(1 - (2*t-1)**2)  # Parabelform für die Kontur
+            y = base_y + wave + (curve * fin_size * 0.5)
+            points.append((int(x), int(y)))
+        
+        # Untere Hälfte der Flosse (gespiegelt)
+        for i in range(5, -1, -1):
+            t = i / 5.0
+            x = base_x - (fin_size * 0.8 * t)
+            wave = np.sin(time_offset + t * 3) * (fin_size * 0.15)
+            curve = (1 - (2*t-1)**2)  # Gespiegelte Parabelform
+            y = base_y + wave + (curve * fin_size * 0.5)
+            points.append((int(x), int(y)))
+        
+        # Flosse zeichnen
+        if len(points) >= 3:
+            # Äußerer Rand (dunkel)
+            pygame.draw.polygon(surface, BACK_DARK_COLOR, points)
             
-            # Breiter Stachel mit Basis-Farbe
-            pygame.draw.line(surface, base_color, 
-                           (int(base_x), int(base_y)), 
-                           (int(tip_x), int(tip_y)), 
-                           max(2, int(spike_length * 0.4)))
+            # Innere Flosse (hell) - etwas kleiner für Randeffekt
+            inner_points = []
+            center = (base_x, base_y)
+            for point in points:
+                # Punkt leicht zum Zentrum verschieben für inneren Bereich
+                dx = point[0] - center[0]
+                dy = point[1] - center[1]
+                scale = 0.9  # Skalierungsfaktor für inneren Bereich
+                inner_x = center[0] + dx * scale
+                inner_y = center[1] + dy * scale
+                inner_points.append((int(inner_x), int(inner_y)))
             
-            # Dunklere Spitze für Kontrast
-            pygame.draw.line(surface, tip_color,
-                           (int(base_x + np.cos(angle) * spike_length * 0.6), 
-                            int(base_y + np.sin(angle) * spike_length * 0.6)),
-                           (int(tip_x), int(tip_y)),
-                           max(2, int(spike_length * 0.3)))
-    
-    def _add_movement_organs(self, surface: pygame.Surface, dna: Dict, energy_percentage: float) -> None:
-        """Fügt Bewegungsorgane (Flossen/Beine) basierend auf DNA hinzu"""
+            pygame.draw.polygon(surface, BACK_COLOR, inner_points)
+
+    def _add_side_movement_organs(self, surface: pygame.Surface, dna: Dict, energy_percentage: float) -> None:
+        """Fügt die seitlichen Bewegungsorgane (Flossen) hinzu"""
         width, height = surface.get_size()
-        organ_count = max(2, int(4 * dna['movement_organ_count']))
-        organ_size = max(3, int(height * 0.2 * dna['movement_organ_size']))
         
-        # Kontrastreichere Organfarbe basierend auf Energie
-        energy_factor = 0.6 + energy_percentage * 0.4  # Mindestens 60% Farbintensität
-        base_color = (
-            min(255, int((150 + dna['speed'] * 105) * energy_factor)),
-            min(255, int((150 + dna['speed'] * 105) * energy_factor)),
-            min(255, int((50 + dna['speed'] * 155) * energy_factor))
-        )
-        # Dunklerer Rand für Kontrast
-        border_color = tuple(max(0, c - 60) for c in base_color)
+        # Flossengröße basierend auf DNA - deutlich größer
+        fin_size = max(8, int(width * 0.3 * 
+                           dna.get('movement', {}).get('movement_side_organ_size', 0.5)))
         
-        # Bewegungsorgane an den Seiten verteilen mit Animation basierend auf Energie
-        animation_offset = np.sin(pygame.time.get_ticks() * 0.01 * energy_percentage) * organ_size * 0.2
+        # Positionen der Flossen (weiter außen)
+        top_fin_y = height * 0.25  # Weiter nach oben
+        bottom_fin_y = height * 0.75  # Weiter nach unten
+        fin_x = width * 0.35  # Genau in der Mitte
         
-        for i in range(organ_count):
-            y = height * (0.3 + (0.4 * i / max(1, organ_count - 1)))
+        # Zeit für Animation
+        time_offset = pygame.time.get_ticks() * 0.002
+        wave = np.sin(time_offset) * fin_size * 0.2
+        
+        # Obere Flosse zeichnen
+        top_points = []
+        for i in range(5):
+            t = i / 4.0  # 0 bis 1
+            # Parabelförmige Kurve nach oben, stärker ausgeprägt
+            x = fin_x + fin_size * t
+            curve = -(1 - (2*t-1)**2) * 1.5  # Stärkere Krümmung
+            y = top_fin_y + wave * (1-t) + (curve * fin_size * 0.7)  # Größere vertikale Ausdehnung
+            top_points.append((int(x), int(y)))
+        
+        # Basis der oberen Flosse
+        top_points.append((int(fin_x), int(top_fin_y)))
+        
+        # Untere Flosse zeichnen
+        bottom_points = []
+        for i in range(5):
+            t = i / 4.0
+            x = fin_x + fin_size * t
+            curve = (1 - (2*t-1)**2) * 1.5  # Stärkere Krümmung
+            y = bottom_fin_y + wave * (1-t) + (curve * fin_size * 0.7)  # Größere vertikale Ausdehnung
+            bottom_points.append((int(x), int(y)))
+        
+        # Basis der unteren Flosse
+        bottom_points.append((int(fin_x), int(bottom_fin_y)))
+        
+        # Flossen zeichnen
+        if len(top_points) >= 3:
+            # Äußerer Rand (dunkel)
+            pygame.draw.polygon(surface, SIDE_DARK_COLOR, top_points)  # Grüne Farbe für Seitenflossen
+            pygame.draw.polygon(surface, SIDE_DARK_COLOR, bottom_points)
             
-            # Position mit Animation
-            y_offset = y + animation_offset * (1 if i % 2 == 0 else -1)
+            # Innere Flosse (hell) - etwas kleiner für Randeffekt
+            def scale_points(points, center, scale=0.9):
+                scaled = []
+                for point in points:
+                    dx = point[0] - center[0]
+                    dy = point[1] - center[1]
+                    scaled.append((
+                        int(center[0] + dx * scale),
+                        int(center[1] + dy * scale)
+                    ))
+                return scaled
             
-            # Linke Seite
-            pygame.draw.ellipse(surface, border_color,
-                              (0, y_offset - organ_size//2, organ_size * 1.5, organ_size))
-            pygame.draw.ellipse(surface, base_color,
-                              (1, y_offset - organ_size//2 + 1, organ_size * 1.5 - 2, organ_size - 2))
+            # Skalierte innere Punkte für beide Flossen
+            top_inner = scale_points(top_points, (fin_x, top_fin_y))
+            bottom_inner = scale_points(bottom_points, (fin_x, bottom_fin_y))
             
-            # Rechte Seite
-            pygame.draw.ellipse(surface, border_color,
-                              (width - organ_size * 1.5, y_offset - organ_size//2, organ_size * 1.5, organ_size))
-            pygame.draw.ellipse(surface, base_color,
-                              (width - organ_size * 1.5 + 1, y_offset - organ_size//2 + 1, 
-                               organ_size * 1.5 - 2, organ_size - 2))
-    
+            # Innere Flossen zeichnen
+            pygame.draw.polygon(surface, SIDE_COLOR, top_inner)  # Hellgrüne Farbe für innere Flossen
+            pygame.draw.polygon(surface, SIDE_COLOR, bottom_inner)
+
+    def _draw_bounding_box(self, surface: pygame.Surface) -> None:
+        """Zeichnet einen weißen Rahmen um die Kreatur"""
+        width, height = surface.get_size()
+        pygame.draw.rect(surface, (255, 255, 255), (0, 0, width-1, height-1), 1)
+
     def render_creature(self, dna: Dict, health_percentage: float = 1.0, energy_percentage: float = 1.0) -> pygame.Surface:
-        """Erstellt eine Kreatur basierend auf ihrer DNA und aktuellem Zustand"""
-        # Größe basierend auf DNA
-        width = int(self.max_width * dna['size'])
-        height = int(self.max_height * dna['size'])
+        """Erstellt eine Kreatur im Pixel-Art Stil"""
+        # Größe basierend auf DNA mit Fehlerbehandlung
+        size = dna.get('physical', {}).get('size', 1.0)
+        width = int(self.default_width * size)
+        height = int(self.default_length * size)
         
-        # Basis-Farbwerte berechnen
-        health_color = (
-            min(255, int(200 + (1 - health_percentage) * 55)),  # Mehr rot bei weniger Gesundheit
-            min(255, int(130 + health_percentage * 125)),
-            min(255, int(130 + dna['speed'] * 125))
-        )
+        # Erstelle Surface
+        surface = self._create_body_surface(width, height)
         
-        energy_factor = energy_percentage * 0.7 + 0.3  # Mindestens 30% Helligkeit
-        
-        # Finale Farbe basierend auf Gesundheit und Energie
-        base_color = (
-            int(health_color[0] * energy_factor),
-            int(health_color[1] * energy_factor),
-            int(health_color[2] * energy_factor)
-        )
-        
-        # Grundkörper erstellen
-        surface = self._create_body_surface(width, height, base_color)
-        
-        # Features mit angepasster Intensität hinzufügen
-        self._add_movement_organs(surface, dna, energy_percentage)
-        self._add_spikes(surface, dna)
+        # Features hinzufügen
+        self._add_forward_movement_organs(surface, dna, energy_percentage)
+        self._add_side_movement_organs(surface, dna, energy_percentage)
+        self._add_mouth(surface, dna)
         self._add_eyes(surface, dna, energy_percentage)
+        
+        # Bounding Box zeichnen
+        #self._draw_bounding_box(surface)
         
         return surface 

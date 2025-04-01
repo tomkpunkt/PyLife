@@ -44,6 +44,10 @@ class Waste:
             return False
         return True
     
+    def is_depleted(self):
+        """Prüft, ob der Abfall verschwunden ist"""
+        return self.age >= self.decay_time
+    
     def draw(self, screen):
         """Zeichnet den Abfall"""
         pos = self.body.position

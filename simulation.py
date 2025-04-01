@@ -1,10 +1,13 @@
 import pymunk
 import pygame
 import numpy as np
-from entity import Entity
-from creature_renderer import CreatureRenderer
-from food import Food
-from waste import Waste
+from PyLife.creature import Entity
+from PyLife.creature_renderer import CreatureRenderer
+from PyLife.world_food import Food
+from PyLife.world_waste import Waste
+from PyLife.creature_dna import DNA
+from PyLife.neural_network import NeuralNetwork
+import random
 
 class Simulation:
     def __init__(self, width, height):
@@ -17,6 +20,7 @@ class Simulation:
         self.waste = []  # Liste für Abfall
         self.generation = 1
         self.time = 0
+        self.population_size = 20  # Standardgröße der Population
         
         # Ausgewählte Entity
         self.selected_entity = None
@@ -91,8 +95,7 @@ class Simulation:
         if y is None:
             y = np.random.uniform(0, self.height)
             
-        entity = Entity(self.space, x, y, dna)
-        entity.simulation = self  # Referenz zur Simulation hinzufügen
+        entity = Entity(self.space, x, y, dna, self)
         self.entities.append(entity)
     
     def spawn_food(self, x=None, y=None):
@@ -116,57 +119,61 @@ class Simulation:
     
     def update(self, dt):
         """Aktualisiert die Simulation"""
-        # Welt aktualisieren
+        # Aktualisiere die Physik-Engine
         self.space.step(dt)
         
-        # Entities aktualisieren
-        for entity in self.entities[:]:  # Kopie der Liste für sicheres Entfernen
-            if not entity.update(dt):
-                # Entity ist gestorben, entferne sie
-                self.space.remove(entity.body, entity.shape)
-                self.entities.remove(entity)
-                if self.selected_entity == entity:
-                    self.selected_entity = None
-        
-        # Kollisionen zwischen Entities und Nahrung prüfen
-        for entity in self.entities:
-            for food in self.food[:]:  # Kopie der Liste für sicheres Entfernen
-                if self._check_collision(entity.shape, food.shape):
+        # Aktualisiere alle Entities
+        for entity in self.entities[:]:  # Kopie der Liste für sichere Iteration
+            entity.update(dt)
+            
+            # Prüfe auf Nahrungsaufnahme
+            for food in self.food[:]:  # Kopie der Liste für sichere Iteration
+                if (entity.body.position - food.body.position).length < entity.radius + food.radius:
                     if entity.eat_food(food):
                         self.space.remove(food.body, food.shape)
                         self.food.remove(food)
-                        # Spawne neue Nahrung
-                        self.spawn_food()
-        
-        # Abfall aktualisieren
-        for waste in self.waste[:]:
-            if not waste.update(dt):
-                self.waste.remove(waste)
-                self.space.remove(waste.body, waste.shape)
-    
-    def _check_collision(self, shape1, shape2):
-        """Überprüft Kollision zwischen zwei Shapes"""
-        return shape1.shapes_collide(shape2).points
-    
-    def handle_zoom(self, zoom_delta, mouse_pos):
-        """Verarbeitet Zoom-Eingaben vom Mausrad"""
-        # Zoom-Level anpassen (min: 0.1, max: 3.0)
-        old_zoom = self.zoom
-        self.zoom = max(0.1, min(3.0, self.zoom + zoom_delta * 0.1))
-        
-        # Wenn Zoom-Level sich geändert hat
-        if self.zoom != old_zoom:
-            # Mausposition relativ zum Kamera-Offset berechnen
-            rel_x = (mouse_pos[0] - self.camera_offset[0]) / old_zoom
-            rel_y = (mouse_pos[1] - self.camera_offset[1]) / old_zoom
             
-            # Neuen Kamera-Offset berechnen, damit der Zoom um den Mauszeiger herum erfolgt
+            # Prüfe auf Waste-Generierung
+            waste_list = entity.get_waste_to_create()
+            for waste_size, waste_quality in waste_list:
+                self.spawn_waste(entity.body.position.x, entity.body.position.y,
+                               waste_size, waste_quality)
+            
+            # Entferne tote Entities
+            if entity.health <= 0 or entity.energy <= 0:
+                self.space.remove(entity.body, entity.shape)
+                self.entities.remove(entity)
+                continue
+        
+        # Aktualisiere Waste
+        for waste in self.waste[:]:
+            waste.update(dt)
+            if waste.is_depleted():
+                self.space.remove(waste.body, waste.shape)
+                self.waste.remove(waste)
+    
+    def handle_zoom(self, zoom_value, mouse_pos):
+        """Verarbeitet Zoom-Ereignisse"""
+        old_zoom = self.zoom
+        # Zoom-Wert anpassen (positiv = reinzoomen, negativ = rauszoomen)
+        if zoom_value > 0:
+            self.zoom = min(4.0, self.zoom * 1.1)
+        else:
+            self.zoom = max(0.25, self.zoom / 1.1)
+            
+        # Zoom um den Mauszeiger zentrieren
+        if old_zoom != self.zoom:
+            # Berechne die Differenz der Zoom-Level
+            zoom_factor = self.zoom / old_zoom
+            
+            # Berechne den Offset basierend auf der Mausposition
+            mouse_x, mouse_y = mouse_pos
             self.camera_offset = (
-                mouse_pos[0] - rel_x * self.zoom,
-                mouse_pos[1] - rel_y * self.zoom
+                mouse_x - (mouse_x - self.camera_offset[0]) * zoom_factor,
+                mouse_y - (mouse_y - self.camera_offset[1]) * zoom_factor
             )
 
-    def draw(self, surface):
+    def draw(self, surface, debug_mode=False):
         """Zeichnet die Simulation"""
         # Temporäre Surface für die Simulation erstellen
         temp_surface = pygame.Surface((self.width, self.height))
@@ -174,19 +181,27 @@ class Simulation:
         
         # Entities zeichnen
         for entity in self.entities:
-            entity.draw(temp_surface)
+            # Debug-Informationen nur für die ausgewählte Entity anzeigen (Performance-Optimierung)
+            is_selected = entity == self.selected_entity
+            entity.draw(temp_surface, debug_mode and is_selected)
         
         # Nahrung zeichnen
         for food in self.food:
             food.draw(temp_surface)
-        
+            
         # Abfall zeichnen
         for waste in self.waste:
             waste.draw(temp_surface)
-        
+            
         # Ausgewählte Entity hervorheben
         if self.selected_entity:
             self.selected_entity.draw_highlight(temp_surface)
+        
+        # Bei aktivem Debug-Modus Info anzeigen
+        if debug_mode:
+            small_font = pygame.font.Font(None, 20)
+            debug_text = small_font.render("Debug Mode", True, (255, 50, 50))
+            temp_surface.blit(debug_text, (10, 10))
         
         # Skalierte und verschobene Version auf die Hauptsurface zeichnen
         scaled_surface = pygame.transform.scale(temp_surface, 
@@ -195,31 +210,41 @@ class Simulation:
         surface.blit(scaled_surface, 
                     (self.camera_offset[0], self.camera_offset[1]))
     
-    def next_generation(self):
-        """Erstellt die nächste Generation"""
-        # Beste Entities auswählen
-        survivors = sorted(self.entities, 
-                         key=lambda x: x.energy + x.health, 
-                         reverse=True)[:5]
+    def next_generation(self) -> None:
+        """Erstellt die nächste Generation von Kreaturen"""
+        # Sortiere Kreaturen nach Fitness
+        self.entities.sort(key=lambda x: x.fitness, reverse=True)
         
-        # Alle Entities entfernen
-        for entity in self.entities:
-            self.space.remove(entity.body, entity.shape)
-        self.entities.clear()
+        # Behalte die besten 20% für die nächste Generation
+        survivors_count = max(2, int(len(self.entities) * 0.2))
+        survivors = self.entities[:survivors_count]
         
-        # Neue Generation erstellen
-        for _ in range(20):  # 20 neue Entities
-            if survivors:
-                # Zufälligen Überlebenden auswählen
-                parent = np.random.choice(survivors)
-                # Neue Entity mit mutierter DNA erstellen
-                mutated_dna = {
-                    k: v * np.random.uniform(0.9, 1.1)
-                    for k, v in parent.dna.items()
-                }
-                self.spawn_entity(dna=mutated_dna)
-            else:
-                # Wenn keine Überlebenden, zufällige Entity erstellen
-                self.spawn_entity()
+        # Erstelle neue Generation
+        new_generation = []
         
+        # Füge Überlebende hinzu
+        new_generation.extend(survivors)
+        
+        # Fülle den Rest mit Nachkommen auf
+        while len(new_generation) < self.population_size:
+            # Wähle zufällige Eltern aus den Überlebenden
+            parent = random.choice(survivors)
+            
+            # Erstelle Kind mit mutierter DNA
+            child_dna = parent.dna.copy()
+            mutation_rate = parent.dna['reproduction']['mutation_rate']  # Korrekte Kategorie
+            child_dna.mutate(mutation_rate)
+            
+            # Erstelle neue Kreatur mit der mutierten DNA
+            child = Entity(
+                self.space,
+                x=random.uniform(0, self.width),
+                y=random.uniform(0, self.height),
+                dna=child_dna,
+                simulation=self
+            )
+            new_generation.append(child)
+        
+        # Aktualisiere die Population
+        self.entities = new_generation
         self.generation += 1 
