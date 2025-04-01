@@ -3,6 +3,8 @@ import pygame
 import numpy as np
 from entity import Entity
 from creature_renderer import CreatureRenderer
+from food import Food
+from waste import Waste
 
 class Simulation:
     def __init__(self, width, height):
@@ -12,6 +14,7 @@ class Simulation:
         
         self.entities = []
         self.food = []
+        self.waste = []  # Liste für Abfall
         self.generation = 1
         self.time = 0
         
@@ -31,32 +34,37 @@ class Simulation:
         # Wände erstellen
         self._create_walls()
         
-    def handle_click(self, pos):
-        """Behandelt Mausklicks und selektiert Entities"""
-        # Prüfen ob eine Entity angeklickt wurde
-        clicked_entity = None
-        for entity in self.entities:
-            # Distanz zwischen Klickposition und Entity berechnen
-            dx = entity.body.position.x - pos[0]
-            dy = entity.body.position.y - pos[1]
-            distance = np.sqrt(dx*dx + dy*dy)
-            
-            # Wenn Klick innerhalb des Entity-Radius
-            if distance <= entity.radius:
-                clicked_entity = entity
-                break
+        self.zoom = 1.0  # Zoom-Level
+        self.camera_offset = (0, 0)  # Kamera-Offset für Panning
         
-        # Wenn eine Entity gefunden wurde
-        if clicked_entity:
-            if self.selected_entity == clicked_entity:
-                # Gleiche Entity nochmal geklickt -> Auswahl aufheben
-                self.selected_entity = None
-            else:
-                # Neue Entity ausgewählt
-                self.selected_entity = clicked_entity
-        else:
-            # Klick außerhalb -> Auswahl aufheben
-            self.selected_entity = None
+    def reset_camera(self):
+        """Setzt die Kamera-Einstellungen auf die Standardwerte zurück"""
+        self.zoom = 1.0
+        self.camera_offset = [0, 0]
+
+    def handle_click(self, pos, button=1):
+        """Behandelt Mausklicks"""
+        # Mittlere Maustaste (2) setzt die Kamera zurück
+        if button == 2:  # Mausrad-Klick
+            self.reset_camera()
+            return
+            
+        # Mausposition an Zoom und Offset anpassen
+        adjusted_x = (pos[0] - self.camera_offset[0]) / self.zoom
+        adjusted_y = (pos[1] - self.camera_offset[1]) / self.zoom
+        
+        # Prüfe Kollision mit Entities
+        for entity in self.entities:
+            entity_pos = entity.body.position
+            distance = ((adjusted_x - entity_pos.x) ** 2 + 
+                       (adjusted_y - entity_pos.y) ** 2) ** 0.5
+            
+            if distance <= entity.radius:
+                self.selected_entity = entity
+                return
+        
+        # Wenn keine Entity getroffen wurde, Auswahl aufheben
+        self.selected_entity = None
     
     def _create_walls(self):
         """Erstellt die Wände der Simulationsumgebung"""
@@ -77,13 +85,14 @@ class Simulation:
             self.space.add(body, shape)
     
     def spawn_entity(self, x=None, y=None, dna=None):
-        """Spawnt eine neue Entity"""
+        """Erstellt eine neue Entity an der angegebenen Position"""
         if x is None:
-            x = np.random.randint(50, self.width - 50)
+            x = np.random.uniform(0, self.width)
         if y is None:
-            y = np.random.randint(50, self.height - 50)
+            y = np.random.uniform(0, self.height)
             
         entity = Entity(self.space, x, y, dna)
+        entity.simulation = self  # Referenz zur Simulation hinzufügen
         self.entities.append(entity)
     
     def spawn_food(self, x=None, y=None):
@@ -92,60 +101,99 @@ class Simulation:
             x = np.random.randint(20, self.width - 20)
         if y is None:
             y = np.random.randint(20, self.height - 20)
-            
-        body = pymunk.Body(body_type=pymunk.Body.STATIC)
-        body.position = (x, y)
-        shape = pymunk.Circle(body, 5)
-        shape.sensor = True  # Macht die Nahrung zu einem Sensor
-        self.space.add(body, shape)
-        self.food.append((body, shape))
+        
+        food = Food(self.space, x, y)
+        self.food.append(food)
+    
+    def spawn_waste(self, x, y, size, quality):
+        """Spawnt Abfall in der Umgebung"""
+        # Stelle sicher, dass die Position innerhalb der Grenzen ist
+        x = max(20, min(self.width - 20, x))
+        y = max(20, min(self.height - 20, y))
+        
+        waste = Waste(self.space, x, y, size, quality)
+        self.waste.append(waste)
     
     def update(self, dt):
         """Aktualisiert die Simulation"""
-        # Physik-Engine aktualisieren
+        # Welt aktualisieren
         self.space.step(dt)
         
         # Entities aktualisieren
-        for entity in self.entities[:]:
+        for entity in self.entities[:]:  # Kopie der Liste für sicheres Entfernen
             if not entity.update(dt):
-                self.entities.remove(entity)
+                # Entity ist gestorben, entferne sie
                 self.space.remove(entity.body, entity.shape)
-                if entity == self.selected_entity:
+                self.entities.remove(entity)
+                if self.selected_entity == entity:
                     self.selected_entity = None
         
-        # Kollisionserkennung zwischen Entities und Nahrung
+        # Kollisionen zwischen Entities und Nahrung prüfen
         for entity in self.entities:
-            for food_body, food_shape in self.food[:]:
-                if self._check_collision(entity.shape, food_shape):
-                    # Entity bekommt Energie
-                    entity.eat_food(20)
-                    # Nahrung entfernen
-                    self.space.remove(food_body, food_shape)
-                    self.food.remove((food_body, food_shape))
-                    # Neue Nahrung spawnen
-                    self.spawn_food()
+            for food in self.food[:]:  # Kopie der Liste für sicheres Entfernen
+                if self._check_collision(entity.shape, food.shape):
+                    if entity.eat_food(food):
+                        self.space.remove(food.body, food.shape)
+                        self.food.remove(food)
+                        # Spawne neue Nahrung
+                        self.spawn_food()
+        
+        # Abfall aktualisieren
+        for waste in self.waste[:]:
+            if not waste.update(dt):
+                self.waste.remove(waste)
+                self.space.remove(waste.body, waste.shape)
     
     def _check_collision(self, shape1, shape2):
         """Überprüft Kollision zwischen zwei Shapes"""
         return shape1.shapes_collide(shape2).points
     
+    def handle_zoom(self, zoom_delta, mouse_pos):
+        """Verarbeitet Zoom-Eingaben vom Mausrad"""
+        # Zoom-Level anpassen (min: 0.1, max: 3.0)
+        old_zoom = self.zoom
+        self.zoom = max(0.1, min(3.0, self.zoom + zoom_delta * 0.1))
+        
+        # Wenn Zoom-Level sich geändert hat
+        if self.zoom != old_zoom:
+            # Mausposition relativ zum Kamera-Offset berechnen
+            rel_x = (mouse_pos[0] - self.camera_offset[0]) / old_zoom
+            rel_y = (mouse_pos[1] - self.camera_offset[1]) / old_zoom
+            
+            # Neuen Kamera-Offset berechnen, damit der Zoom um den Mauszeiger herum erfolgt
+            self.camera_offset = (
+                mouse_pos[0] - rel_x * self.zoom,
+                mouse_pos[1] - rel_y * self.zoom
+            )
+
     def draw(self, surface):
-        """Zeichnet die Simulation auf die angegebene Surface"""
-        # Nahrung zeichnen
-        for food_body, _ in self.food:
-            pos = food_body.position
-            pygame.draw.circle(surface, (255, 0, 0), 
-                             (int(pos.x), int(pos.y)), 5)
+        """Zeichnet die Simulation"""
+        # Temporäre Surface für die Simulation erstellen
+        temp_surface = pygame.Surface((self.width, self.height))
+        temp_surface.fill((240, 240, 245))  # Hintergrundfarbe
         
         # Entities zeichnen
         for entity in self.entities:
-            entity.draw(surface)
-            # Ausgewählte Entity hervorheben
-            if entity == self.selected_entity:
-                pos = entity.body.position
-                pygame.draw.circle(surface, (0, 255, 255), 
-                                 (int(pos.x), int(pos.y)), 
-                                 int(entity.radius + 2), 2)
+            entity.draw(temp_surface)
+        
+        # Nahrung zeichnen
+        for food in self.food:
+            food.draw(temp_surface)
+        
+        # Abfall zeichnen
+        for waste in self.waste:
+            waste.draw(temp_surface)
+        
+        # Ausgewählte Entity hervorheben
+        if self.selected_entity:
+            self.selected_entity.draw_highlight(temp_surface)
+        
+        # Skalierte und verschobene Version auf die Hauptsurface zeichnen
+        scaled_surface = pygame.transform.scale(temp_surface, 
+                                             (int(self.width * self.zoom), 
+                                              int(self.height * self.zoom)))
+        surface.blit(scaled_surface, 
+                    (self.camera_offset[0], self.camera_offset[1]))
     
     def next_generation(self):
         """Erstellt die nächste Generation"""

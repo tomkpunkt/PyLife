@@ -178,10 +178,14 @@ def main():
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 1:  # Linke Maustaste
-                    # Nur Klicks in der Simulationsfläche verarbeiten
-                    if event.pos[0] < SIMULATION_WIDTH:
-                        sim.handle_click(event.pos)
+                # Nur Klicks in der Simulationsfläche verarbeiten
+                if event.pos[0] < SIMULATION_WIDTH:
+                    sim.handle_click(event.pos, event.button)
+            elif event.type == pygame.MOUSEWHEEL:
+                # Mausrad-Event verarbeiten
+                mouse_pos = pygame.mouse.get_pos()
+                if mouse_pos[0] < SIMULATION_WIDTH:  # Nur in der Simulationsfläche
+                    sim.handle_zoom(event.y, mouse_pos)
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_SPACE:
                     # Nächste Generation mit Leertaste
